@@ -94,3 +94,4 @@ Kelompok 3 berembuk cepat untuk menjawab sebelum waktu habis.
 Di akhir kelas, energi kelas mencapai 100% dan animasi selebrasi muncul di proyektor.
 Guru menekan tombol "Ekspor Excel" untuk menyimpan seluruh data partisipasi sebagai nilai formatif.
 ```
+

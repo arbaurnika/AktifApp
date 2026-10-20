@@ -41,6 +41,37 @@ function generatePin() {
   return pin;
 }
 
+// Helper to get room from memory or disk, ensuring groups are synced
+export function getRoom(pin) {
+  if (!pin) return null;
+  let room = activeRooms.get(pin);
+  if (!room) {
+    room = getSession(pin);
+    if (room) {
+      activeRooms.set(pin, room);
+    }
+  }
+  if (room) {
+    room.groups = room.groups || [];
+    // Synchronize any custom groups that students might have joined with
+    if (room.students) {
+      const existingNames = new Set(room.groups.map(g => g.name.toLowerCase()));
+      Object.values(room.students).forEach(st => {
+        if (st.group && st.group !== 'Tanpa Kelompok' && !existingNames.has(st.group.toLowerCase())) {
+          room.groups.push({
+            id: `group-${room.groups.length + 1}`,
+            name: st.group,
+            score: 0,
+            relaysCompleted: 0
+          });
+          existingNames.add(st.group.toLowerCase());
+        }
+      });
+    }
+  }
+  return room;
+}
+
 // REST Endpoints
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', activeRoomsCount: activeRooms.size, timestamp: new Date() });
@@ -53,14 +84,14 @@ app.get('/api/sessions', (req, res) => {
 
 app.get('/api/sessions/:pin', (req, res) => {
   const { pin } = req.params;
-  const room = activeRooms.get(pin) || getSession(pin);
+  const room = getRoom(pin);
   if (!room) return res.status(404).json({ error: 'Sesi tidak ditemukan' });
   res.json(room);
 });
 
 app.get('/api/sessions/:pin/export', (req, res) => {
   const { pin } = req.params;
-  const room = activeRooms.get(pin) || getSession(pin);
+  const room = getRoom(pin);
   if (!room) return res.status(404).json({ error: 'Sesi tidak ditemukan' });
 
   const buffer = generateClassReport(room);
@@ -112,18 +143,45 @@ io.on('connection', (socket) => {
 
   // 2. Student joins room (Zero Login)
   socket.on('student:join', ({ pin, name, group }, callback) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) {
       if (callback) callback({ success: false, error: 'Kode PIN kelas tidak valid atau sesi sudah ditutup!' });
       return;
     }
 
+    // Process custom or selected group name
+    const requestedGroup = (group && typeof group === 'string') ? group.trim() : 'Tanpa Kelompok';
+    room.groups = room.groups || [];
+    const matchedGroup = room.groups.find(g => g.name.toLowerCase() === requestedGroup.toLowerCase());
+    let finalGroupName = requestedGroup;
+
+    if (matchedGroup) {
+      finalGroupName = matchedGroup.name; // Keep established casing
+    } else if (requestedGroup && requestedGroup !== 'Tanpa Kelompok') {
+      // Automatically register new custom group into room.groups so it appears in teacher views & scoring!
+      const newGroup = {
+        id: `group-${room.groups.length + 1}`,
+        name: requestedGroup,
+        score: 0,
+        relaysCompleted: 0
+      };
+      room.groups.push(newGroup);
+      finalGroupName = newGroup.name;
+    }
+
     // Check if re-joining with same name in same room
     const existingEntry = Object.values(room.students).find(s => s.name.toLowerCase() === name.trim().toLowerCase());
+    
+    // Clean up old socket entry if student is reconnecting with a new socket ID
+    const oldSocketId = Object.keys(room.students).find(sid => room.students[sid].name.toLowerCase() === name.trim().toLowerCase());
+    if (oldSocketId && oldSocketId !== socket.id) {
+      delete room.students[oldSocketId];
+    }
+
     const studentData = {
       id: socket.id,
       name: name.trim(),
-      group: group || 'Tanpa Kelompok',
+      group: finalGroupName,
       points: existingEntry ? existingEntry.points : 0,
       buzzCount: existingEntry ? existingEntry.buzzCount : 0,
       ideasCount: existingEntry ? existingEntry.ideasCount : 0,
@@ -156,7 +214,7 @@ io.on('connection', (socket) => {
 
   // 3. Student Buzzes in (Angkat Tangan Cepat)
   socket.on('student:buzz', ({ pin }, callback) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) return;
 
     const student = room.students[socket.id];
@@ -195,7 +253,7 @@ io.on('connection', (socket) => {
 
   // 4. Teacher clears buzzer queue
   socket.on('teacher:clear-buzzer', ({ pin }) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) return;
 
     room.buzzerQueue = [];
@@ -205,7 +263,7 @@ io.on('connection', (socket) => {
 
   // 5. Student submits idea/question
   socket.on('student:submit-idea', ({ pin, content, isAnonymous }, callback) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) return;
 
     const student = room.students[socket.id];
@@ -250,7 +308,7 @@ io.on('connection', (socket) => {
 
   // 6. Student/Peer Upvotes Idea
   socket.on('student:upvote-idea', ({ pin, ideaId }, callback) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) return;
 
     const idea = room.ideas.find(i => i.id === ideaId);
@@ -280,7 +338,7 @@ io.on('connection', (socket) => {
 
   // 7. Teacher adds points (Quick Tally Rubric)
   socket.on('teacher:add-points', ({ pin, targetType, targetId, points, reason, badge }) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) return;
 
     let targetName = '';
@@ -329,7 +387,7 @@ io.on('connection', (socket) => {
 
   // 8. Challenge Relay (Estafet Tantangan Antar-Kelompok)
   socket.on('relay:start', ({ pin, fromGroup, toGroup, question, durationSeconds = 90 }) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) return;
 
     room.activeRelay = {
@@ -357,7 +415,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('relay:complete', ({ pin, responseText, bonusPoints = 20 }) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room || !room.activeRelay) return;
 
     const currentRelay = room.activeRelay;
@@ -392,7 +450,7 @@ io.on('connection', (socket) => {
 
   // 9. Mystery Wheel (Random Picker Siswa)
   socket.on('mystery:spin', ({ pin, selectedStudent }) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) return;
 
     room.activityLogs.unshift({
@@ -409,7 +467,7 @@ io.on('connection', (socket) => {
 
   // 10. Manual Class Energy adjustment
   socket.on('teacher:adjust-energy', ({ pin, delta }) => {
-    const room = activeRooms.get(pin);
+    const room = getRoom(pin);
     if (!room) return;
 
     room.classEnergy = Math.min(100, Math.max(0, (room.classEnergy || 0) + delta));

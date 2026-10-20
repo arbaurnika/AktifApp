@@ -45,3 +45,4 @@ export function getSession(pin) {
   const sessions = loadSessions();
   return sessions.find(s => s.pin === pin) || null;
 }
+

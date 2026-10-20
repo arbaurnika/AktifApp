@@ -124,12 +124,16 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
 
   const handleStartRelay = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!room || !relayFrom || !relayTo) return;
+    if (!room) return;
+
+    const from = relayFrom || room.groups[0]?.name;
+    const to = relayTo || room.groups[1]?.name || room.groups[0]?.name;
+    if (!from || !to) return;
 
     socket.emit('relay:start', {
       pin: room.pin,
-      fromGroup: relayFrom,
-      toGroup: relayTo,
+      fromGroup: from,
+      toGroup: to,
       question: relayQuestion.trim(),
       durationSeconds: relayDuration
     });
@@ -595,7 +599,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
                       Dari Kelompok (Penantang):
                     </label>
                     <select
-                      value={relayFrom}
+                      value={relayFrom || (room.groups[0]?.name || '')}
                       onChange={(e) => setRelayFrom(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none"
                     >
@@ -609,7 +613,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
                       Ke Kelompok (Penerima):
                     </label>
                     <select
-                      value={relayTo}
+                      value={relayTo || (room.groups[1]?.name || room.groups[0]?.name || '')}
                       onChange={(e) => setRelayTo(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none"
                     >

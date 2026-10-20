@@ -14,3 +14,4 @@ export const socket: Socket = io(SOCKET_URL, {
   reconnectionDelay: 1000,
   transports: ['websocket', 'polling']
 });
+

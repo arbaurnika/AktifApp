@@ -30,7 +30,19 @@ export function generateClassReport(room) {
   XLSX.utils.book_append_sheet(wb, wsStudents, 'Keaktifan Individu');
 
   // 2. Rekap Kelompok
-  const groups = room.groups || [];
+  const groups = [...(room.groups || [])];
+  const existingNames = new Set(groups.map(g => g.name.toLowerCase()));
+  students.forEach(s => {
+    if (s.group && s.group !== 'Tanpa Kelompok' && !existingNames.has(s.group.toLowerCase())) {
+      groups.push({
+        id: `group-${groups.length + 1}`,
+        name: s.group,
+        score: 0,
+        relaysCompleted: 0
+      });
+      existingNames.add(s.group.toLowerCase());
+    }
+  });
   const groupRows = groups.map((g, idx) => {
     const groupMembers = students.filter(s => s.group === g.name);
     const avgScore = groupMembers.length > 0 
@@ -69,3 +81,4 @@ export function generateClassReport(room) {
 
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 }
+

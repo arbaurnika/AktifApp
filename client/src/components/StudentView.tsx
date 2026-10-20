@@ -28,6 +28,9 @@ export const StudentView: React.FC<StudentViewProps> = ({ initialPin = '', onExi
   const [name, setName] = useState('');
   const [group, setGroup] = useState('Kelompok 1');
   const [customGroup, setCustomGroup] = useState('');
+  const [availableGroups, setAvailableGroups] = useState<string[]>([
+    'Kelompok 1', 'Kelompok 2', 'Kelompok 3', 'Kelompok 4', 'Kelompok 5', 'Kelompok 6'
+  ]);
   const [hasJoined, setHasJoined] = useState(false);
   const [joinError, setJoinError] = useState('');
   const [isJoining, setIsJoining] = useState(false);
@@ -52,11 +55,43 @@ export const StudentView: React.FC<StudentViewProps> = ({ initialPin = '', onExi
       try {
         const parsed = JSON.parse(cached);
         if (parsed.name) setName(parsed.name);
-        if (parsed.group) setGroup(parsed.group);
+        if (parsed.group) {
+          if (parsed.group.startsWith('Kelompok')) {
+            setGroup(parsed.group);
+          } else {
+            setGroup('__custom__');
+            setCustomGroup(parsed.group);
+          }
+        }
         if (parsed.pin && !initialPin) setPin(parsed.pin);
       } catch {}
     }
   }, [initialPin]);
+
+  // Dynamically load room groups from teacher's session if available
+  useEffect(() => {
+    const cleanPin = pin.trim();
+    if (cleanPin.length === 6) {
+      fetch(`/api/sessions/${cleanPin}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && Array.isArray(data.groups) && data.groups.length > 0) {
+            const serverGroups = data.groups.map((g: { name: string }) => g.name);
+            setAvailableGroups(serverGroups);
+            setGroup(prev => {
+              if (prev === '__custom__') return prev;
+              if (serverGroups.includes(prev)) return prev;
+              if (prev && !prev.startsWith('Kelompok')) {
+                setCustomGroup(prev);
+                return '__custom__';
+              }
+              return serverGroups[0] || 'Kelompok 1';
+            });
+          }
+        })
+        .catch(() => {});
+    }
+  }, [pin]);
 
   // Setup Socket listeners
   useEffect(() => {
@@ -111,9 +146,14 @@ export const StudentView: React.FC<StudentViewProps> = ({ initialPin = '', onExi
       return;
     }
 
+    if (group === '__custom__' && !customGroup.trim()) {
+      setJoinError('Silakan ketik nama kelompok kamu.');
+      return;
+    }
+
     setJoinError('');
     setIsJoining(true);
-    const selectedGroup = group === '__custom__' ? customGroup.trim() || 'Kelompok Bebas' : group;
+    const selectedGroup = group === '__custom__' ? customGroup.trim() : group;
 
     socket.emit('student:join', { pin: pin.trim(), name: name.trim(), group: selectedGroup }, (res: { success: boolean; student?: Student; room?: Room; error?: string }) => {
       setIsJoining(false);
@@ -242,7 +282,7 @@ export const StudentView: React.FC<StudentViewProps> = ({ initialPin = '', onExi
                 Pilih Kelompok
               </label>
               <div className="grid grid-cols-3 gap-2 mb-2">
-                {['Kelompok 1', 'Kelompok 2', 'Kelompok 3', 'Kelompok 4', 'Kelompok 5', 'Kelompok 6'].map((grp) => (
+                {availableGroups.map((grp) => (
                   <button
                     key={grp}
                     type="button"

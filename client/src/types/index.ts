@@ -79,3 +79,4 @@ export interface Room {
   activityLogs: ActivityLog[];
   createdAt: string;
 }
+

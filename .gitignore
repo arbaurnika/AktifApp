@@ -26,3 +26,4 @@ server/data/*.json
 # OS generated
 .DS_Store
 Thumbs.db
+
