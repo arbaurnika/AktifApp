@@ -47,6 +47,8 @@ export const StudentView: React.FC<StudentViewProps> = ({ initialPin = '', onExi
   const [isSendingIdea, setIsSendingIdea] = useState(false);
   const [relayResponseText, setRelayResponseText] = useState('');
   const [activeTab, setActiveTab] = useState<'buzzer' | 'ideas' | 'team'>('buzzer');
+  const [isClassEnded, setIsClassEnded] = useState(false);
+  const [endMessage, setEndMessage] = useState('');
 
   // Load cached student info from localStorage if available
   useEffect(() => {
@@ -128,14 +130,23 @@ export const StudentView: React.FC<StudentViewProps> = ({ initialPin = '', onExi
       confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
     };
 
+    const handleClassEnded = (data: { message?: string }) => {
+      setIsClassEnded(true);
+      if (data.message) setEndMessage(data.message);
+      playSound.fanfare();
+      confetti({ particleCount: 150, spread: 80, origin: { y: 0.5 } });
+    };
+
     socket.on('room:updated', handleRoomUpdated);
     socket.on('relay:alert', handleRelayAlert);
     socket.on('class:goal-reached', handleGoalReached);
+    socket.on('class:ended', handleClassEnded);
 
     return () => {
       socket.off('room:updated', handleRoomUpdated);
       socket.off('relay:alert', handleRelayAlert);
       socket.off('class:goal-reached', handleGoalReached);
+      socket.off('class:ended', handleClassEnded);
     };
   }, [currentStudent]);
 
@@ -225,6 +236,65 @@ export const StudentView: React.FC<StudentViewProps> = ({ initialPin = '', onExi
     playSound.fanfare();
     confetti({ particleCount: 80, spread: 60 });
   };
+
+  // If class ended by teacher, show completion summary
+  if (isClassEnded) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 flex flex-col justify-center items-center p-4">
+        <div className="w-full max-w-md bg-slate-900/95 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl text-center backdrop-blur-md">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-500 to-rose-500 text-white flex items-center justify-center mx-auto mb-4 shadow-lg shadow-amber-500/25">
+            <Award className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-extrabold text-white mb-1">Kelas Selesai! 🎉</h2>
+          <p className="text-xs text-slate-400 mb-6">
+            {endMessage || 'Sesi pembelajaran telah diakhiri oleh Guru. Terima kasih atas partisipasi aktifmu!'}
+          </p>
+
+          <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 mb-6 space-y-3">
+            <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
+              <span className="text-slate-400">Nama Siswa:</span>
+              <span className="font-bold text-white">{currentStudent?.name}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
+              <span className="text-slate-400">Kelompok:</span>
+              <span className="font-bold text-indigo-400">{currentStudent?.group}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs border-b border-slate-800/80 pb-2">
+              <span className="text-slate-400">Total Poin Keaktifan:</span>
+              <span className="font-extrabold text-amber-400 text-sm">{currentStudent?.points || 0} pts</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-400">Buzzer / Ide:</span>
+              <span className="text-slate-300">{currentStudent?.buzzCount || 0} buzz • {currentStudent?.ideasCount || 0} ide</span>
+            </div>
+          </div>
+
+          {currentStudent && currentStudent.badges && currentStudent.badges.length > 0 && (
+            <div className="mb-6">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Lencana Penghargaan:</span>
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {currentStudent.badges.map(b => (
+                  <span key={b.id} className="bg-slate-800 border border-amber-500/30 px-2.5 py-1 rounded-lg text-xs text-white flex items-center gap-1">
+                    <span>{b.icon}</span> <span>{b.name}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={() => {
+              localStorage.removeItem('aktifclass_student');
+              onExit();
+            }}
+            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 rounded-xl transition cursor-pointer text-xs"
+          >
+            Kembali ke Beranda
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // If not joined, show Clean Zero-Login Join Screen
   if (!hasJoined) {

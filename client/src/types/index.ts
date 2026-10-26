@@ -78,5 +78,6 @@ export interface Room {
   activeRelay: RelayChallenge | null;
   activityLogs: ActivityLog[];
   createdAt: string;
+  isClosed?: boolean;
 }
 

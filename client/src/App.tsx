@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { TeacherView } from './components/TeacherView';
 import { StudentView } from './components/StudentView';
 import { 
@@ -13,31 +13,48 @@ import {
 } from 'lucide-react';
 
 export function App() {
-  const [viewMode, setViewMode] = useState<'landing' | 'teacher' | 'student'>('landing');
-  const [urlPin, setUrlPin] = useState('');
-
-  // Auto-detect PIN from URL parameters (e.g. from QR Code scan)
-  useEffect(() => {
+  const [viewMode, setViewMode] = useState<'landing' | 'teacher' | 'student'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      const pinParam = params.get('pin');
-      const modeParam = params.get('mode');
-
-      if (pinParam) {
-        setUrlPin(pinParam);
-        setViewMode('student');
-      } else if (modeParam === 'teacher') {
-        setViewMode('teacher');
-      }
+      if (params.get('pin')) return 'student';
+      if (params.get('mode') === 'teacher') return 'teacher';
+      if (localStorage.getItem('aktifclass_teacher_pin')) return 'teacher';
     }
-  }, []);
+    return 'landing';
+  });
+
+  const [urlPin] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('pin') || '';
+    }
+    return '';
+  });
+
+  const handleExitToLanding = () => {
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    setViewMode('landing');
+  };
+
+  const handleSwitchToTeacher = () => {
+    if (typeof window !== 'undefined') {
+      window.history.replaceState(null, '', '?mode=teacher');
+    }
+    setViewMode('teacher');
+  };
+
+  const handleSwitchToStudent = () => {
+    setViewMode('student');
+  };
 
   if (viewMode === 'teacher') {
-    return <TeacherView onExit={() => setViewMode('landing')} />;
+    return <TeacherView onExit={handleExitToLanding} />;
   }
 
   if (viewMode === 'student') {
-    return <StudentView initialPin={urlPin} onExit={() => setViewMode('landing')} />;
+    return <StudentView initialPin={urlPin} onExit={handleExitToLanding} />;
   }
 
   // Modern Landing Page
@@ -62,13 +79,13 @@ export function App() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setViewMode('student')}
+              onClick={handleSwitchToStudent}
               className="text-xs sm:text-sm font-semibold text-slate-300 hover:text-white px-3 sm:px-4 py-2 rounded-xl transition"
             >
               Masuk Siswa
             </button>
             <button
-              onClick={() => setViewMode('teacher')}
+              onClick={handleSwitchToTeacher}
               className="text-xs sm:text-sm font-semibold bg-indigo-600 hover:bg-indigo-500 text-white px-3.5 sm:px-4 py-2 rounded-xl shadow-md shadow-indigo-600/30 transition cursor-pointer"
             >
               Mode Guru
@@ -96,7 +113,7 @@ export function App() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto w-full mb-14">
           {/* Card Siswa */}
           <div
-            onClick={() => setViewMode('student')}
+            onClick={handleSwitchToStudent}
             className="group relative bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-indigo-500/50 rounded-3xl p-6 sm:p-8 transition-all duration-200 cursor-pointer shadow-xl flex flex-col justify-between"
           >
             <div>
@@ -133,7 +150,7 @@ export function App() {
 
           {/* Card Guru */}
           <div
-            onClick={() => setViewMode('teacher')}
+            onClick={handleSwitchToTeacher}
             className="group relative bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-purple-500/50 rounded-3xl p-6 sm:p-8 transition-all duration-200 cursor-pointer shadow-xl flex flex-col justify-between"
           >
             <div>

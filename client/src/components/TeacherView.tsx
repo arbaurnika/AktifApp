@@ -18,7 +18,11 @@ import {
   Trash2,
   X,
   ThumbsUp,
-  MessageSquare
+  MessageSquare,
+  LogOut,
+  ArrowRight,
+  KeyRound,
+  AlertCircle
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -32,6 +36,13 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
   const [groupCount, setGroupCount] = useState(5);
   const [room, setRoom] = useState<Room | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [isAutoRejoining, setIsAutoRejoining] = useState(false);
+  const [isRejoining, setIsRejoining] = useState(false);
+  const [rejoinPin, setRejoinPin] = useState('');
+  const [rejoinError, setRejoinError] = useState('');
+  const [cachedPin, setCachedPin] = useState<string | null>(null);
+  const [setupTab, setSetupTab] = useState<'create' | 'rejoin'>('create');
+  const [showEndModal, setShowEndModal] = useState(false);
 
   // Modals & Panels
   const [showQRModal, setShowQRModal] = useState(false);
@@ -82,6 +93,38 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
     };
   }, []);
 
+  // Check localStorage for active teacher session on mount (Auto-Recovery)
+  useEffect(() => {
+    const savedPin = localStorage.getItem('aktifclass_teacher_pin');
+    if (savedPin) {
+      setCachedPin(savedPin);
+      setRejoinPin(savedPin);
+      setIsAutoRejoining(true);
+      socket.emit('teacher:rejoin', { pin: savedPin }, (res: { success: boolean; room?: Room; error?: string }) => {
+        setIsAutoRejoining(false);
+        if (res.success && res.room) {
+          setRoom(res.room);
+          playSound.chime();
+        } else {
+          localStorage.removeItem('aktifclass_teacher_pin');
+          setCachedPin(null);
+        }
+      });
+    }
+  }, []);
+
+  // Prevent accidental tab close or page reload when classroom session is live
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (room) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [room]);
+
   const handleCreateRoom = (e: React.FormEvent) => {
     e.preventDefault();
     setIsCreating(true);
@@ -95,12 +138,45 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
       setIsCreating(false);
       if (res.success) {
         setRoom(res.room);
+        localStorage.setItem('aktifclass_teacher_pin', res.room.pin);
+        setCachedPin(res.room.pin);
         if (generatedGroups.length >= 2) {
           setRelayFrom(generatedGroups[0]);
           setRelayTo(generatedGroups[1]);
         }
         playSound.chime();
       }
+    });
+  };
+
+  const handleManualRejoin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejoinPin.trim()) return;
+    setRejoinError('');
+    setIsRejoining(true);
+
+    socket.emit('teacher:rejoin', { pin: rejoinPin.trim() }, (res: { success: boolean; room?: Room; error?: string }) => {
+      setIsRejoining(false);
+      if (res.success && res.room) {
+        setRoom(res.room);
+        localStorage.setItem('aktifclass_teacher_pin', res.room.pin);
+        setCachedPin(res.room.pin);
+        playSound.chime();
+      } else {
+        setRejoinError(res.error || 'Sesi kelas tidak ditemukan. Pastikan 6 digit PIN benar.');
+      }
+    });
+  };
+
+  const handleEndSession = () => {
+    if (!room) return;
+    socket.emit('teacher:end-session', { pin: room.pin }, () => {
+      localStorage.removeItem('aktifclass_teacher_pin');
+      setCachedPin(null);
+      setShowEndModal(false);
+      // Automatically trigger Excel report download for teacher
+      window.location.href = `/api/sessions/${room.pin}/export`;
+      onExit();
     });
   };
 
@@ -190,7 +266,22 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
   const currentHost = typeof window !== 'undefined' ? window.location.host : 'localhost:5173';
   const joinUrl = `http://${currentHost}/?pin=${room?.pin || ''}`;
 
-  // If no room created yet, show Create Room Screen
+  // If recovering session, show loading state
+  if (isAutoRejoining) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 flex flex-col justify-center items-center p-4">
+        <div className="w-full max-w-md bg-slate-900/90 border border-slate-800 rounded-3xl p-8 shadow-2xl text-center backdrop-blur-md">
+          <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center mx-auto mb-4 border border-indigo-500/30 animate-pulse">
+            <Zap className="w-7 h-7 text-indigo-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-1">Memulihkan Sesi Kelas...</h2>
+          <p className="text-xs text-slate-400">Menyambungkan kembali kendali guru ke PIN {cachedPin}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // If no room created yet, show Create / Rejoin Screen
   if (!room) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 flex flex-col justify-center items-center p-4">
@@ -199,69 +290,168 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600/20 text-indigo-400 mb-3 border border-indigo-500/30">
               <Sparkles className="w-7 h-7 text-indigo-400" />
             </div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">Mulai Sesi Kelas Baru</h1>
+            <h1 className="text-2xl font-bold text-white tracking-tight">Ruang Kendali Guru</h1>
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
               AktifClass: Pengukur Keaktifan & Kolaborasi Berbasis Zero-Login
             </p>
           </div>
 
-          <form onSubmit={handleCreateRoom} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-300 tracking-wider mb-1.5">
-                Topik / Mata Pelajaran
-              </label>
-              <input
-                type="text"
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                placeholder="Misal: Biologi - Struktur Sel / Matematika - Statistika"
-                className="w-full bg-slate-950/80 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl px-4 py-3 text-white placeholder-slate-600 outline-none transition text-sm"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-300 tracking-wider mb-1.5">
-                Jumlah Kelompok Siswa
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min={2}
-                  max={10}
-                  value={groupCount}
-                  onChange={(e) => setGroupCount(Number(e.target.value))}
-                  className="flex-1 accent-indigo-500 cursor-pointer"
-                />
-                <span className="w-12 text-center text-sm font-bold bg-slate-800 py-1.5 px-2 rounded-lg border border-slate-700 text-indigo-300">
-                  {groupCount} Kel.
-                </span>
+          {/* Quick Resume Banner if previous PIN was stored */}
+          {cachedPin && (
+            <div className="mb-5 p-3.5 bg-gradient-to-r from-indigo-500/15 to-purple-500/15 border border-indigo-500/30 rounded-2xl flex items-center justify-between gap-3 text-left">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-indigo-400 tracking-wider block">Sesi Aktif Terdeteksi</span>
+                <span className="text-base font-bold text-white font-mono tracking-wider">PIN: {cachedPin}</span>
               </div>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Aplikasi akan otomatis menyiapkan Kelompok 1 s.d Kelompok {groupCount}
-              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setRejoinPin(cachedPin);
+                  setIsRejoining(true);
+                  socket.emit('teacher:rejoin', { pin: cachedPin }, (res: { success: boolean; room?: Room; error?: string }) => {
+                    setIsRejoining(false);
+                    if (res.success && res.room) {
+                      setRoom(res.room);
+                      playSound.chime();
+                    } else {
+                      localStorage.removeItem('aktifclass_teacher_pin');
+                      setCachedPin(null);
+                      setRejoinError(res.error || 'Sesi kelas tidak ditemukan.');
+                    }
+                  });
+                }}
+                disabled={isRejoining}
+                className="bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
+              >
+                <span>{isRejoining ? 'Menyambung...' : 'Lanjutkan Kelas'}</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
             </div>
+          )}
 
+          {/* Mode Switch Tabs */}
+          <div className="flex border border-slate-800 rounded-xl p-1 bg-slate-950/60 mb-5">
             <button
-              type="submit"
-              disabled={isCreating}
-              className="w-full mt-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] text-white font-semibold py-3.5 px-4 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              type="button"
+              onClick={() => setSetupTab('create')}
+              className={`flex-1 py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                setupTab === 'create' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+              }`}
             >
-              {isCreating ? (
-                <span>Menyiapkan Ruangan...</span>
-              ) : (
-                <>
-                  <span>Buka Kelas & Tampilkan QR Proyektor</span>
-                  <Share2 className="w-4 h-4" />
-                </>
-              )}
+              Buka Sesi Kelas Baru
             </button>
-          </form>
+            <button
+              type="button"
+              onClick={() => setSetupTab('rejoin')}
+              className={`flex-1 py-2 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                setupTab === 'rejoin' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Sambung Kembali via PIN
+            </button>
+          </div>
+
+          {setupTab === 'create' ? (
+            <form onSubmit={handleCreateRoom} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-300 tracking-wider mb-1.5">
+                  Topik / Mata Pelajaran
+                </label>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Misal: Biologi - Struktur Sel / Informatika - Algoritma"
+                  className="w-full bg-slate-950/80 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl px-4 py-3 text-white placeholder-slate-600 outline-none transition text-sm"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-300 tracking-wider mb-1.5">
+                  Jumlah Kelompok Siswa
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min={2}
+                    max={10}
+                    value={groupCount}
+                    onChange={(e) => setGroupCount(Number(e.target.value))}
+                    className="flex-1 accent-indigo-500 cursor-pointer"
+                  />
+                  <span className="w-12 text-center text-sm font-bold bg-slate-800 py-1.5 px-2 rounded-lg border border-slate-700 text-indigo-300">
+                    {groupCount} Kel.
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Aplikasi akan otomatis menyiapkan Kelompok 1 s.d Kelompok {groupCount}
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isCreating}
+                className="w-full mt-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] text-white font-semibold py-3.5 px-4 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isCreating ? (
+                  <span>Menyiapkan Ruangan...</span>
+                ) : (
+                  <>
+                    <span>Buka Kelas & Tampilkan QR Proyektor</span>
+                    <Share2 className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleManualRejoin} className="space-y-4">
+              {rejoinError && (
+                <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{rejoinError}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-300 tracking-wider mb-1.5">
+                  Masukkan 6 Digit PIN Kelas
+                </label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={rejoinPin}
+                  onChange={(e) => setRejoinPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Misal: 749201"
+                  className="w-full text-center text-2xl font-mono tracking-widest bg-slate-950/80 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl py-3 text-white placeholder-slate-600 outline-none transition"
+                  required
+                />
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  Gunakan ini jika kamu tidak sengaja menutup tab atau ingin mengambil alih kendali kelas dari laptop/HP lain.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isRejoining || rejoinPin.trim().length !== 6}
+                className="w-full mt-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] text-white font-semibold py-3.5 px-4 rounded-xl shadow-lg shadow-indigo-600/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isRejoining ? (
+                  <span>Menyambungkan ke Kelas...</span>
+                ) : (
+                  <>
+                    <span>Sambung Kembali ke Kelas</span>
+                    <KeyRound className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+          )}
 
           <div className="mt-6 pt-4 border-t border-slate-800 text-center">
             <button
               onClick={onExit}
-              className="text-xs text-slate-500 hover:text-slate-300 transition"
+              className="text-xs text-slate-500 hover:text-slate-300 transition cursor-pointer"
             >
               Kembali ke Menu Awal
             </button>
@@ -317,11 +507,20 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
               </div>
             </div>
 
+            <button
+              onClick={() => setShowEndModal(true)}
+              className="bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition cursor-pointer"
+              title="Akhiri Pembelajaran & Unduh Rekap Excel"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Akhiri Kelas</span>
+            </button>
+
             <a
               href={`/api/sessions/${room.pin}/export`}
               download
               className="bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-semibold px-3 py-2 rounded-xl flex items-center gap-1.5 transition"
-              title="Download Rekap Nilai Format Kurikulum Merdeka (Excel)"
+              title="Download Rekap Nilai Format Excel"
             >
               <Download className="w-4 h-4" />
               <span className="hidden sm:inline">Ekspor Excel</span>
@@ -329,8 +528,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
 
             <button
               onClick={onExit}
-              className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-slate-800 transition"
-              title="Keluar ke Menu"
+              className="text-slate-400 hover:text-white p-2 rounded-xl hover:bg-slate-800 transition cursor-pointer"
+              title="Keluar ke Menu Utama (Sesi tetap aktif di latar belakang)"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1009,6 +1208,38 @@ export const TeacherView: React.FC<TeacherViewProps> = ({ onExit }) => {
                   </div>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: KONFIRMASI AKHIRI SESI KELAS */}
+      {showEndModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center relative shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-rose-600/20 text-rose-400 flex items-center justify-center mx-auto mb-4 border border-rose-500/30">
+              <LogOut className="w-7 h-7 text-rose-400" />
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">Akhiri Sesi Pembelajaran?</h3>
+            <p className="text-xs text-slate-400 leading-relaxed mb-6">
+              Siswa di kelas akan diberi notifikasi bahwa sesi telah selesai. Rekapitulasi keaktifan kelas akan otomatis diunduh dalam format Excel.
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowEndModal(false)}
+                className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition cursor-pointer"
+              >
+                Lanjutkan Kelas
+              </button>
+              <button
+                type="button"
+                onClick={handleEndSession}
+                className="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition cursor-pointer shadow-lg shadow-rose-600/30"
+              >
+                Ya, Akhiri & Unduh Rekap
+              </button>
             </div>
           </div>
         </div>

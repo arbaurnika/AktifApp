@@ -141,11 +141,59 @@ io.on('connection', (socket) => {
     if (callback) callback({ success: true, room });
   });
 
+  // 1b. Teacher rejoins existing room (Auto-Recovery / Resume Session)
+  socket.on('teacher:rejoin', ({ pin }, callback) => {
+    const room = getRoom(pin);
+    if (!room) {
+      if (callback) callback({ success: false, error: 'Sesi kelas tidak ditemukan atau sudah ditutup!' });
+      return;
+    }
+
+    room.teacherSocketId = socket.id;
+    socket.join(pin);
+    socket.data.role = 'teacher';
+    socket.data.pin = pin;
+
+    saveSession(room);
+    console.log(`[Teacher Rejoined] PIN: ${pin}, Subject: ${room.subject}`);
+    if (callback) callback({ success: true, room });
+    io.to(pin).emit('room:updated', room);
+  });
+
+  // 1c. Teacher officially ends the session
+  socket.on('teacher:end-session', ({ pin }, callback) => {
+    const room = getRoom(pin);
+    if (!room) return;
+
+    room.isClosed = true;
+    room.activityLogs.unshift({
+      id: Date.now(),
+      timestamp: new Date().toISOString(),
+      type: 'END_SESSION',
+      targetName: 'Kelas Selesai',
+      description: 'Guru telah mengakhiri sesi pembelajaran ini.'
+    });
+
+    saveSession(room);
+    io.to(pin).emit('class:ended', {
+      message: 'Sesi pembelajaran telah diakhiri oleh Guru. Terima kasih atas partisipasi aktifmu!',
+      room
+    });
+    io.to(pin).emit('room:updated', room);
+    if (callback) callback({ success: true });
+    console.log(`[Room Ended by Teacher] PIN: ${pin}`);
+  });
+
   // 2. Student joins room (Zero Login)
   socket.on('student:join', ({ pin, name, group }, callback) => {
     const room = getRoom(pin);
     if (!room) {
-      if (callback) callback({ success: false, error: 'Kode PIN kelas tidak valid atau sesi sudah ditutup!' });
+      if (callback) callback({ success: false, error: 'Kode PIN kelas tidak valid atau sesi tidak ditemukan!' });
+      return;
+    }
+
+    if (room.isClosed) {
+      if (callback) callback({ success: false, error: 'Sesi kelas ini telah diakhiri oleh Guru.' });
       return;
     }
 
